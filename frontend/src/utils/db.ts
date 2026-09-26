@@ -8,7 +8,7 @@ import type { RetainSample } from '../types/retain-sample';
 export const DB_NAME = 'gbherbprocess-db';
 
 /** 当前 schema 版本，与 db.version(n) 对应 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 class HerbProcessDB extends Dexie {
   herbs!: Table<HerbMaterial, string>;
@@ -49,6 +49,16 @@ class HerbProcessDB extends Dexie {
             }
           });
       });
+
+    // v3：批次新增 actualTemp / actualDuration / qcAt（非索引字段，索引不变，无需回填）。
+    // 升级前的老批次缺这两个数，打开记录时按对应方法标准值兜底（见 BatchBoard）。
+    this.version(3).stores({
+      herbs: 'id, name, origin, part, batchNo, receivedAt',
+      methods: 'id, name, auxiliary, fireLevel',
+      batches: 'id, batchNo, herbId, methodId, degree, startedAt, locked',
+      samples: 'id, sampleNo, batchId, cabinet, retainedAt',
+      meta: 'key',
+    });
   }
 }
 

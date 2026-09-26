@@ -11,6 +11,10 @@ export interface BatchInput {
   feedKg: number;
   auxUsedKg: number;
   fireLevel: FireLevel;
+  /** 实际锅温（℃） */
+  actualTemp: number;
+  /** 实际炮制时长（min） */
+  actualDuration: number;
   startedAt: string;
   endedAt: string;
   yieldRate: number;
@@ -53,6 +57,8 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
       feedKg: Number(input.feedKg) || 0,
       auxUsedKg: Number(input.auxUsedKg) || 0,
       fireLevel: input.fireLevel,
+      actualTemp: Number(input.actualTemp) || 0,
+      actualDuration: Number(input.actualDuration) || 0,
       startedAt: input.startedAt,
       endedAt: input.endedAt,
       yieldRate: Number(input.yieldRate) || 0,
@@ -77,7 +83,9 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     }
     const next: ProcessBatch = { ...current, ...patch };
     if (force) {
-      next.qcBy = next.qcBy ?? '质检员 · 赵敏';
+      // 质检改判：记下本次改判人与改判时间；operator 与 lockedAt（首次锁定）保持原样
+      next.qcBy = '质检员 · 赵敏';
+      next.qcAt = new Date().toISOString();
     }
     await db.batches.put(next);
     set({ batches: get().batches.map((b) => (b.id === id ? next : b)) });
@@ -104,7 +112,7 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     if (!current) {
       return;
     }
-    const next: ProcessBatch = { ...current, locked: false, qcBy };
+    const next: ProcessBatch = { ...current, locked: false, qcBy, qcAt: new Date().toISOString() };
     await db.batches.put(next);
     set({ batches: get().batches.map((b) => (b.id === id ? next : b)) });
   },

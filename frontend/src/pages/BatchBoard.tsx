@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, App as AntApp, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, App as AntApp, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useSearchParams } from 'react-router-dom';
@@ -131,8 +131,9 @@ export default function BatchBoard() {
       auxUsedKg: record.auxUsedKg,
       outputKg: Number(((record.feedKg * record.yieldRate) / 100).toFixed(1)),
       fireLevel: record.fireLevel,
-      temp: suggested ? Math.round((suggested.tempRange[0] + suggested.tempRange[1]) / 2) : 100,
-      duration: suggested?.duration ?? 12,
+      // 按当时录入的实际锅温/时长回显（含已锁定批次）；升级前的老批次缺这两个数，按方法标准值兜底
+      temp: record.actualTemp ?? (suggested ? Math.round((suggested.tempRange[0] + suggested.tempRange[1]) / 2) : 100),
+      duration: record.actualDuration ?? suggested?.duration ?? 12,
       startedAt: dayjs(record.startedAt),
       endedAt: dayjs(record.endedAt),
       operator: record.operator,
@@ -158,6 +159,8 @@ export default function BatchBoard() {
       feedKg,
       auxUsedKg: Number(values.auxUsedKg) || 0,
       fireLevel: values.fireLevel,
+      actualTemp: Number(values.temp) || 0,
+      actualDuration: Number(values.duration) || 0,
       startedAt: values.startedAt.toISOString(),
       endedAt: values.endedAt.toISOString(),
       yieldRate,
@@ -192,6 +195,24 @@ export default function BatchBoard() {
       width: 180,
       render: (v: FireLevel, record) => <FireLevelTag level={v} tempRange={methodOf(record.methodId)?.tempRange} duration={methodOf(record.methodId)?.duration} />,
     },
+    {
+      title: '实际锅温/时长',
+      key: 'actual',
+      width: 150,
+      render: (_, record) => {
+        const method = methodOf(record.methodId);
+        // 老批次缺实际值时按方法标准值兜底展示，并标注「标准」
+        const temp = record.actualTemp ?? (method ? Math.round((method.tempRange[0] + method.tempRange[1]) / 2) : undefined);
+        const duration = record.actualDuration ?? method?.duration;
+        if (temp === undefined && duration === undefined) return '-';
+        const estimated = record.actualTemp === undefined || record.actualDuration === undefined;
+        return (
+          <Text type={estimated ? 'secondary' : undefined}>
+            {temp ?? '-'}℃ · {duration ?? '-'}min{estimated ? '（标准）' : ''}
+          </Text>
+        );
+      },
+    },
     { title: '投料(kg)', dataIndex: 'feedKg', width: 90, align: 'right' },
     { title: '辅料(kg)', dataIndex: 'auxUsedKg', width: 90, align: 'right' },
     { title: '得率(%)', dataIndex: 'yieldRate', width: 90, align: 'right', render: (v: number) => <Text type={v < 85 ? 'danger' : undefined}>{v}</Text> },
@@ -199,9 +220,26 @@ export default function BatchBoard() {
     {
       title: '状态',
       dataIndex: 'locked',
-      width: 100,
-      render: (locked: boolean, record) =>
-        locked ? <Tag color="blue">已锁定{record.qcBy ? ` · ${record.qcBy}` : ''}</Tag> : <Tag>待判定</Tag>,
+      width: 150,
+      render: (locked: boolean, record) => {
+        const qcTip = record.qcBy
+          ? `质检改判 ${record.qcBy}${record.qcAt ? ` · ${dayjs(record.qcAt).format('YYYY-MM-DD HH:mm')}` : ''}`
+          : undefined;
+        if (locked) {
+          return (
+            <Tooltip title={qcTip}>
+              <Tag color="blue">已锁定{record.qcBy ? ` · ${record.qcBy}` : ''}</Tag>
+            </Tooltip>
+          );
+        }
+        return record.qcBy ? (
+          <Tooltip title={qcTip}>
+            <Tag color="purple">已改判 · {record.qcBy}</Tag>
+          </Tooltip>
+        ) : (
+          <Tag>待判定</Tag>
+        );
+      },
     },
     { title: '操作人', dataIndex: 'operator', width: 90 },
     {
@@ -278,7 +316,7 @@ export default function BatchBoard() {
       {visibleBatches.length === 0 ? (
         <EmptyPanel description="没有符合条件的工序记录" actionText="新建一条工序记录" onAction={openCreate} />
       ) : (
-        <Table rowKey="id" size="small" columns={columns} dataSource={visibleBatches} pagination={{ pageSize: 10 }} scroll={{ x: 1400 }} />
+        <Table rowKey="id" size="small" columns={columns} dataSource={visibleBatches} pagination={{ pageSize: 10 }} scroll={{ x: 1550 }} />
       )}
 
       <Modal
@@ -328,6 +366,7 @@ export default function BatchBoard() {
               showIcon
               style={{ marginBottom: 12 }}
               message="该批得率与程度已锁定，仅质检员可改"
+              description={`操作人 ${editing.operator}${editing.lockedAt ? ` · 首次锁定 ${dayjs(editing.lockedAt).format('YYYY-MM-DD HH:mm')}` : ''}${editing.qcBy ? ` · 最近改判 ${editing.qcBy}${editing.qcAt ? ` ${dayjs(editing.qcAt).format('YYYY-MM-DD HH:mm')}` : ''}` : ''}`}
               action={<Switch checkedChildren="质检员改判" unCheckedChildren="只读" checked={qcMode} onChange={setQcMode} />}
             />
           ) : null}
@@ -430,7 +469,7 @@ export default function BatchBoard() {
               <DatePicker showTime style={{ width: 190 }} disabled={Boolean(editing?.locked) && !qcMode} />
             </Form.Item>
             <Form.Item name="operator" label="操作人" rules={[{ required: true, message: '请输入操作人' }]}>
-              <Input style={{ width: 140 }} maxLength={16} disabled={Boolean(editing?.locked) && !qcMode} />
+              <Input style={{ width: 140 }} maxLength={16} disabled={Boolean(editing?.locked)} />
             </Form.Item>
           </Space>
 

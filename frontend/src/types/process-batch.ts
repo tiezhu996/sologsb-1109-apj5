@@ -18,6 +18,10 @@ export interface ProcessBatch {
   auxUsedKg: number;
   /** 火候 */
   fireLevel: FireLevel;
+  /** 实际锅温（℃）——随批次保存，复核时按此回显；老批次缺省，读取时按方法标准值兜底 */
+  actualTemp?: number;
+  /** 实际炮制时长（min）——随批次保存，复核时按此回显；老批次缺省，读取时按方法标准值兜底 */
+  actualDuration?: number;
   /** 开始时间 ISO */
   startedAt: string;
   /** 结束时间 ISO */
@@ -34,6 +38,8 @@ export interface ProcessBatch {
   lockedAt?: string;
   /** 质检员放行/改判人 */
   qcBy?: string;
+  /** 质检改判时间 ISO */
+  qcAt?: string;
   /** 备注 */
   remark?: string;
 }
