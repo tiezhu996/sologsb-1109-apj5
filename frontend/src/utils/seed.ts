@@ -58,14 +58,17 @@ function buildSeedBatches(): ProcessBatch[] {
     const endedAt = isoMinutesAgo(45 * (index + 1));
     const startedAt = new Date(new Date(endedAt).getTime() - duration * 60_000).toISOString();
     const yieldRate = Number((expectedYieldOf(method) + ((index % 5) - 2) * 0.8).toFixed(1));
+    // 实际锅温在标准区间内小幅波动，随批次保存
+    const actualTemp = Math.round((method.tempRange[0] + method.tempRange[1]) / 2) + ((index % 3) - 1) * 4;
     const verdict = judgeDegree({
       method,
       fireLevel: fireLevel as ProcessBatch['fireLevel'],
       duration,
-      temp: Math.round((method.tempRange[0] + method.tempRange[1]) / 2),
+      temp: actualTemp,
       yieldRate,
     });
     const locked = index >= 2;
+    const lockedAt = locked ? new Date(new Date(endedAt).getTime() + 30 * 60_000).toISOString() : undefined;
     return {
       id: `batch-${String(index + 1).padStart(3, '0')}`,
       batchNo,
@@ -74,14 +77,17 @@ function buildSeedBatches(): ProcessBatch[] {
       feedKg,
       auxUsedKg,
       fireLevel: fireLevel as ProcessBatch['fireLevel'],
+      actualTemp,
+      actualDuration: duration,
       startedAt,
       endedAt,
       yieldRate,
       degree: verdict.degree,
       operator,
       locked,
-      lockedAt: locked ? new Date(new Date(endedAt).getTime() + 30 * 60_000).toISOString() : undefined,
+      lockedAt,
       qcBy: locked ? '质检员 · 赵敏' : undefined,
+      qcAt: locked ? new Date(new Date(lockedAt!).getTime() + 20 * 60_000).toISOString() : undefined,
       remark,
     };
   });

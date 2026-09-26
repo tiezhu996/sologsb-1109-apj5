@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, App as AntApp, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, App as AntApp, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useSearchParams } from 'react-router-dom';
@@ -12,7 +12,7 @@ import { useHerbStore } from '../stores/herbStore';
 import { useMethodStore } from '../stores/methodStore';
 import { useBatchStore } from '../stores/batchStore';
 import { HERB_ORIGINS, HERB_PARTS } from '../types/herb-material';
-import { FIRE_LEVELS, type FireLevel } from '../types/processing-method';
+import { FIRE_LEVELS, type FireLevel, type ProcessingMethod } from '../types/processing-method';
 import { PROCESS_DEGREES, type ProcessBatch, type ProcessDegree } from '../types/process-batch';
 import { DEGREE_RULES, judgeDegree, suggestedValues } from '../utils/degree';
 
@@ -36,6 +36,18 @@ interface BatchFormValues {
 }
 
 const DEGREE_COLOR: Record<ProcessDegree, string> = { 不及: 'orange', 适中: 'green', 太过: 'red' };
+
+/** 当前值班质检员（改判/放行时记录为改判人） */
+const QC_NAME = '质检员 · 赵敏';
+
+/** 老批次缺实际锅温/时长时，按方法标准值兜底，避免打开白屏 */
+function fallbackTempOf(record: ProcessBatch, method: ProcessingMethod | undefined): number {
+  return record.actualTemp ?? (method ? Math.round((method.tempRange[0] + method.tempRange[1]) / 2) : 100);
+}
+
+function fallbackDurationOf(record: ProcessBatch, method: ProcessingMethod | undefined): number {
+  return record.actualDuration ?? method?.duration ?? 12;
+}
 
 /** 工序记录台：选方法自动带出辅料比例、火候与判断标准，录入火候与得率 */
 export default function BatchBoard() {
@@ -122,7 +134,7 @@ export default function BatchBoard() {
     setEditing(record);
     setQcMode(false);
     form.resetFields();
-    const suggested = methodOf(record.methodId);
+    const method = methodOf(record.methodId);
     form.setFieldsValue({
       batchNo: record.batchNo,
       herbId: record.herbId,
@@ -131,8 +143,9 @@ export default function BatchBoard() {
       auxUsedKg: record.auxUsedKg,
       outputKg: Number(((record.feedKg * record.yieldRate) / 100).toFixed(1)),
       fireLevel: record.fireLevel,
-      temp: suggested ? Math.round((suggested.tempRange[0] + suggested.tempRange[1]) / 2) : 100,
-      duration: suggested?.duration ?? 12,
+      // 回显当时录入的实际锅温与时长（含已锁定批次）；老批次缺省则按方法标准值兜底
+      temp: fallbackTempOf(record, method),
+      duration: fallbackDurationOf(record, method),
       startedAt: dayjs(record.startedAt),
       endedAt: dayjs(record.endedAt),
       operator: record.operator,
@@ -158,6 +171,8 @@ export default function BatchBoard() {
       feedKg,
       auxUsedKg: Number(values.auxUsedKg) || 0,
       fireLevel: values.fireLevel,
+      actualTemp: Number(values.temp) || 0,
+      actualDuration: Number(values.duration) || 0,
       startedAt: values.startedAt.toISOString(),
       endedAt: values.endedAt.toISOString(),
       yieldRate,
@@ -166,15 +181,17 @@ export default function BatchBoard() {
       remark: values.remark,
     };
     if (editing) {
-      const ok = await updateBatch(editing.id, payload, qcMode);
+      const ok = await updateBatch(editing.id, payload, qcMode, QC_NAME);
       if (!ok) {
         message.error('该批已锁定，请打开「质检员改判」后再提交');
         return;
       }
       if (qcMode && editing.locked) {
-        await unlockAsQc(editing.id, '质检员 · 赵敏');
+        await unlockAsQc(editing.id, QC_NAME);
+        message.success(`已更新 ${payload.batchNo}，得率 ${yieldRate}%，改判人 ${QC_NAME}`);
+      } else {
+        message.success(`已更新 ${payload.batchNo}，得率 ${yieldRate}%`);
       }
-      message.success(`已更新 ${payload.batchNo}，得率 ${yieldRate}%`);
     } else {
       await createBatch(payload, true);
       message.success(`已提交 ${payload.batchNo}，得率 ${yieldRate}%，该批已锁定`);
@@ -192,6 +209,24 @@ export default function BatchBoard() {
       width: 180,
       render: (v: FireLevel, record) => <FireLevelTag level={v} tempRange={methodOf(record.methodId)?.tempRange} duration={methodOf(record.methodId)?.duration} />,
     },
+    {
+      title: '实际锅温/时长',
+      key: 'actualTempDuration',
+      width: 130,
+      render: (_, record) => {
+        const method = methodOf(record.methodId);
+        const legacy = record.actualTemp === undefined || record.actualDuration === undefined;
+        const text = `${fallbackTempOf(record, method)}℃ · ${fallbackDurationOf(record, method)}min`;
+        // 升级前的老批次没存实际值，按方法标准值兜底显示并标注
+        return legacy ? (
+          <Tooltip title="老批次未记录实际值，按方法标准值兜底显示">
+            <Text type="secondary">{text}</Text>
+          </Tooltip>
+        ) : (
+          <Text>{text}</Text>
+        );
+      },
+    },
     { title: '投料(kg)', dataIndex: 'feedKg', width: 90, align: 'right' },
     { title: '辅料(kg)', dataIndex: 'auxUsedKg', width: 90, align: 'right' },
     { title: '得率(%)', dataIndex: 'yieldRate', width: 90, align: 'right', render: (v: number) => <Text type={v < 85 ? 'danger' : undefined}>{v}</Text> },
@@ -200,8 +235,11 @@ export default function BatchBoard() {
       title: '状态',
       dataIndex: 'locked',
       width: 100,
-      render: (locked: boolean, record) =>
-        locked ? <Tag color="blue">已锁定{record.qcBy ? ` · ${record.qcBy}` : ''}</Tag> : <Tag>待判定</Tag>,
+      render: (locked: boolean, record) => {
+        const tag = locked ? <Tag color="blue">已锁定{record.qcBy ? ` · ${record.qcBy}` : ''}</Tag> : <Tag>待判定</Tag>;
+        if (!record.qcBy || !record.qcAt) return tag;
+        return <Tooltip title={`改判 ${record.qcBy} · ${dayjs(record.qcAt).format('YYYY-MM-DD HH:mm')}`}>{tag}</Tooltip>;
+      },
     },
     { title: '操作人', dataIndex: 'operator', width: 90 },
     {
@@ -218,7 +256,7 @@ export default function BatchBoard() {
               锁定
             </Button>
           ) : (
-            <Button size="small" type="link" onClick={() => unlockAsQc(record.id, '质检员 · 赵敏').then(() => message.success('质检员已放行，可重新编辑'))}>
+            <Button size="small" type="link" onClick={() => unlockAsQc(record.id, QC_NAME).then(() => message.success('质检员已放行，可重新编辑'))}>
               放行
             </Button>
           )}
@@ -328,6 +366,9 @@ export default function BatchBoard() {
               showIcon
               style={{ marginBottom: 12 }}
               message="该批得率与程度已锁定，仅质检员可改"
+              description={`操作人 ${editing.operator} · 首次锁定 ${editing.lockedAt ? dayjs(editing.lockedAt).format('YYYY-MM-DD HH:mm') : '-'}${
+                editing.qcBy ? ` · 改判 ${editing.qcBy}${editing.qcAt ? ` ${dayjs(editing.qcAt).format('YYYY-MM-DD HH:mm')}` : ''}` : ''
+              }`}
               action={<Switch checkedChildren="质检员改判" unCheckedChildren="只读" checked={qcMode} onChange={setQcMode} />}
             />
           ) : null}
@@ -429,8 +470,8 @@ export default function BatchBoard() {
             <Form.Item name="endedAt" label="结束时间" rules={[{ required: true, message: '请选择结束时间' }]}>
               <DatePicker showTime style={{ width: 190 }} disabled={Boolean(editing?.locked) && !qcMode} />
             </Form.Item>
-            <Form.Item name="operator" label="操作人" rules={[{ required: true, message: '请输入操作人' }]}>
-              <Input style={{ width: 140 }} maxLength={16} disabled={Boolean(editing?.locked) && !qcMode} />
+            <Form.Item name="operator" label="操作人" rules={[{ required: true, message: '请输入操作人' }]} tooltip={editing?.locked ? '已锁定批次的操作人照旧，不可修改' : undefined}>
+              <Input style={{ width: 140 }} maxLength={16} disabled={Boolean(editing?.locked)} />
             </Form.Item>
           </Space>
 

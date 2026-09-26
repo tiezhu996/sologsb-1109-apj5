@@ -11,6 +11,10 @@ export interface BatchInput {
   feedKg: number;
   auxUsedKg: number;
   fireLevel: FireLevel;
+  /** 实际锅温（℃） */
+  actualTemp: number;
+  /** 实际炮制时长（min） */
+  actualDuration: number;
   startedAt: string;
   endedAt: string;
   yieldRate: number;
@@ -24,7 +28,8 @@ interface BatchState {
   hydrated: boolean;
   hydrate: () => Promise<void>;
   createBatch: (input: BatchInput, lock?: boolean) => Promise<ProcessBatch>;
-  updateBatch: (id: string, patch: Partial<BatchInput>, force?: boolean) => Promise<boolean>;
+  /** force 为质检改判：记下改判人与改判时间，操作人与首次锁定时间照旧 */
+  updateBatch: (id: string, patch: Partial<BatchInput>, force?: boolean, qcBy?: string) => Promise<boolean>;
   removeBatch: (id: string) => Promise<void>;
   /** 提交得率与程度判定后锁定该批 */
   lockBatch: (id: string) => Promise<void>;
@@ -53,6 +58,8 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
       feedKg: Number(input.feedKg) || 0,
       auxUsedKg: Number(input.auxUsedKg) || 0,
       fireLevel: input.fireLevel,
+      actualTemp: Number(input.actualTemp) || 0,
+      actualDuration: Number(input.actualDuration) || 0,
       startedAt: input.startedAt,
       endedAt: input.endedAt,
       yieldRate: Number(input.yieldRate) || 0,
@@ -67,7 +74,7 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     return batch;
   },
 
-  updateBatch: async (id, patch, force = false) => {
+  updateBatch: async (id, patch, force = false, qcBy) => {
     const current = get().batches.find((b) => b.id === id);
     if (!current) {
       return false;
@@ -77,7 +84,11 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     }
     const next: ProcessBatch = { ...current, ...patch };
     if (force) {
-      next.qcBy = next.qcBy ?? '质检员 · 赵敏';
+      // 质检改判：记下改判人与改判时间；操作人与首次锁定时间照旧
+      next.operator = current.operator;
+      next.lockedAt = current.lockedAt;
+      next.qcBy = qcBy ?? current.qcBy ?? '质检员 · 赵敏';
+      next.qcAt = new Date().toISOString();
     }
     await db.batches.put(next);
     set({ batches: get().batches.map((b) => (b.id === id ? next : b)) });
@@ -94,7 +105,8 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     if (!current) {
       return;
     }
-    const next: ProcessBatch = { ...current, locked: true, lockedAt: new Date().toISOString() };
+    // 重新锁定时保留首次锁定时间
+    const next: ProcessBatch = { ...current, locked: true, lockedAt: current.lockedAt ?? new Date().toISOString() };
     await db.batches.put(next);
     set({ batches: get().batches.map((b) => (b.id === id ? next : b)) });
   },
@@ -104,7 +116,7 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     if (!current) {
       return;
     }
-    const next: ProcessBatch = { ...current, locked: false, qcBy };
+    const next: ProcessBatch = { ...current, locked: false, qcBy, qcAt: new Date().toISOString() };
     await db.batches.put(next);
     set({ batches: get().batches.map((b) => (b.id === id ? next : b)) });
   },

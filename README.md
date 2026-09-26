@@ -72,5 +72,6 @@ npm run build    # 类型检查 + 生产构建
 
 - 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbherbprocess-db`），表：`herbs`、`methods`、`batches`、`samples`、`meta`。
 - `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为 `batches` 增加 `locked` 索引并回填历史数据。升级前可用顶栏「导出备份」导出全量 JSON。
+- 批次记录随批保存实际锅温（`actualTemp`）与炮制时长（`actualDuration`），重新打开（含已锁定批次）按当时录入值回显；质检改判记录改判人（`qcBy`）与改判时间（`qcAt`），操作人与首次锁定时间保持不变。升级前的老批次缺这两个数，打开时按对应方法标准值兜底显示，不会白屏。
 - 首次打开且表为空时写入一批示例台账（`src/utils/seed.ts`），便于直接查看各页面效果。
 - 容器无状态：不使用数据库服务、不挂载命名卷，`docker compose down` 后数据仍留在浏览器中。
